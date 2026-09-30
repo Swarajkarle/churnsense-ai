@@ -1,0 +1,71 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL Database ──────────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    container_name: churnsense_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: churnsense
+      POSTGRES_USER: churnsense_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U churnsense_user -d churnsense"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI Backend ──────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: churnsense_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://churnsense_user:${POSTGRES_PASSWORD:-changeme}@db:5432/churnsense
+      SECRET_KEY: ${SECRET_KEY:-change-this-in-production-minimum-32-chars}
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 60
+      UPLOAD_DIR: /data/uploads
+      MODEL_STORE_PATH: /data/models
+      DEBUG: "false"
+      CORS_ORIGINS: '["http://localhost:3000","https://your-frontend-domain.com"]'
+    volumes:
+      - upload_data:/data/uploads
+      - model_data:/data/models
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Next.js Frontend ─────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: churnsense_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      NEXT_PUBLIC_APP_NAME: ChurnSense AI
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
+  upload_data:
+  model_data:
